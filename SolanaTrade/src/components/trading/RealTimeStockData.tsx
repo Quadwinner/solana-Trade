@@ -217,12 +217,28 @@ export function RealTimeStockData() {
     try {
       console.log("Navigating to intraday with stock:", stock.publicKey.toString());
       
+      // First ensure the stock has proper PublicKey objects
+      const validStock = {
+        ...stock,
+        publicKey: stock.publicKey instanceof PublicKey 
+          ? stock.publicKey 
+          : new PublicKey(stock.publicKey),
+        account: {
+          ...stock.account,
+          authority: stock.account.authority instanceof PublicKey
+            ? stock.account.authority
+            : new PublicKey(stock.account.authority)
+        }
+      };
+      
       navigate('/dashboard', { 
         state: { 
           activeTab: 'intraday',
-          selectedStock: stock
+          selectedStock: validStock
         }
       });
+      
+      console.log('Navigation to intraday trading sent');
     } catch (error) {
       console.error("Error navigating to intraday:", error);
       toast.error("Error opening intraday trading. Please try again.");

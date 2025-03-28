@@ -44,36 +44,100 @@ const IntraDayTradingFeature = () => {
   
   // Check for initialStock from navigation state
   useEffect(() => {
+    // Check if we have a stock passed via navigation
     if (location.state?.selectedStock) {
-      const stockFromNav = location.state.selectedStock;
-      console.log('Stock received from navigation:', stockFromNav);
+      console.log('Navigation state includes selectedStock:', location.state.selectedStock);
       
-      // Ensure we have a valid stock with PublicKey objects
       try {
+        const navStock = location.state.selectedStock;
+        console.log('Raw stock from navigation:', JSON.stringify({
+          publicKey: typeof navStock.publicKey === 'string' ? navStock.publicKey : 'PublicKey object',
+          account: navStock.account
+        }, null, 2));
+        
+        // Ensure we have proper PublicKey objects
+        const stockPublicKey = navStock.publicKey instanceof PublicKey 
+          ? navStock.publicKey 
+          : new PublicKey(navStock.publicKey);
+          
+        const stockAuthority = navStock.account?.authority instanceof PublicKey
+          ? navStock.account.authority
+          : new PublicKey(navStock.account.authority);
+          
+        // Create a valid stock object with all required fields
         const validStock = {
-          ...stockFromNav,
-          publicKey: typeof stockFromNav.publicKey === 'string' 
-            ? new PublicKey(stockFromNav.publicKey) 
-            : stockFromNav.publicKey,
+          publicKey: stockPublicKey,
           account: {
-            ...stockFromNav.account,
-            authority: typeof stockFromNav.account?.authority === 'string'
-              ? new PublicKey(stockFromNav.account.authority)
-              : stockFromNav.account?.authority
+            ...navStock.account,
+            // Ensure these fields exist with defaults if they don't
+            name: navStock.account.name || 'Unknown Stock',
+            symbol: navStock.account.symbol || 'UNKWN',
+            total_supply: navStock.account.total_supply || 10000,
+            available_supply: navStock.account.available_supply || 1000,
+            current_price: navStock.account.current_price || 100,
+            authority: stockAuthority
           }
         };
         
+        console.log('Validated stock with publicKey:', stockPublicKey.toString());
+        console.log('Stock details:', validStock.account.name, validStock.account.symbol);
+        
+        // Check if this stock exists in our current stocks list
+        if (stocks.length > 0) {
+          const stockExists = stocks.some(s => 
+            s.publicKey.toString() === stockPublicKey.toString()
+          );
+          
+          // If stock doesn't exist in our list, add it
+          if (!stockExists) {
+            console.log('Stock not found in current list, adding temporary entry');
+            setStocks(prevStocks => [...prevStocks, validStock]);
+          }
+        } else {
+          console.log('No stocks loaded yet, this stock will be the first one');
+        }
+        
+        // Create an initial price history if it doesn't exist
+        if (!priceHistory[stockPublicKey.toString()]) {
+          console.log('Creating initial price history for stock');
+          const initialPrice = validStock.account.current_price || 100;
+          const initialHistory = generateInitialPriceHistory(initialPrice);
+          setPriceHistory(prev => ({
+            ...prev,
+            [stockPublicKey.toString()]: initialHistory
+          }));
+        }
+        
+        // Set as selected stock
+        console.log('Setting selected stock:', validStock.account.symbol);
         setSelectedStock(validStock);
-        console.log('Set selected stock for intraday trading:', validStock);
+        
+        // Initialize tick data for this stock
+        const initialPrice = validStock.account.current_price || 100;
+        setLastTickData({
+          price: initialPrice,
+          timestamp: Date.now(),
+          change: 0,
+          volume: Math.floor(Math.random() * 1000) + 100
+        });
+        
+        // Clear the navigation state to prevent persistence
+        window.history.replaceState({}, document.title);
       } catch (error) {
-        console.error('Error processing selected stock from navigation:', error);
-        toast.error('Error loading stock data. Please select a stock manually.');
+        console.error('Error processing navigation stock:', error);
+        
+        // More detailed error logging
+        if (error instanceof Error) {
+          console.error('Error name:', error.name);
+          console.error('Error message:', error.message);
+          console.error('Error stack:', error.stack);
+        }
+        
+        // Add more context to the error toast
+        toast.error('Could not load the selected stock. Please try refreshing the stocks list.');
       }
-      
-      // Clear navigation state to prevent persistence
-      window.history.replaceState({}, document.title);
     }
-  }, [location.state]);
+  }, [location.state, stocks.length]);
   
   // Load stocks and start simulation
   useEffect(() => {
@@ -316,31 +380,46 @@ const IntraDayTradingFeature = () => {
     const stockKey = event.target.value;
     console.log('Stock selected with key:', stockKey);
     
-    const stock = stocks.find(s => s.publicKey.toString() === stockKey);
-    if (stock) {
-      console.log('Setting selected stock to:', stock.account.symbol);
-      setSelectedStock(stock);
-      
-      // Create an initial tick for this stock if we don't have lastTickData
-      if (!lastTickData) {
-        const initialTick: TickData = {
-          price: stock.account.current_price,
-          timestamp: Date.now(),
-          change: 0,
-          volume: Math.floor(Math.random() * 500) + 50
-        };
+    try {
+      const stock = stocks.find(s => s.publicKey.toString() === stockKey);
+      if (stock) {
+        console.log('Setting selected stock to:', stock.account.symbol);
+        setSelectedStock(stock);
         
-        setLastTickData(initialTick);
-      }
-      
-      // Force redraw of chart
-      setTimeout(() => {
-        if (chartRef.current) {
-          drawChart();
+        // Create an initial tick for this stock if we don't have lastTickData
+        if (!lastTickData) {
+          const initialTick: TickData = {
+            price: stock.account.current_price,
+            timestamp: Date.now(),
+            change: 0,
+            volume: Math.floor(Math.random() * 500) + 50
+          };
+          
+          setLastTickData(initialTick);
+        } else {
+          // Update tick data with the selected stock's price
+          setLastTickData({
+            price: stock.account.current_price,
+            timestamp: Date.now(),
+            change: 0,
+            volume: Math.floor(Math.random() * 500) + 50
+          });
         }
-      }, 100);
-    } else {
-      console.error('Stock not found with key:', stockKey);
+        
+        // Force redraw of chart
+        setTimeout(() => {
+          if (chartRef.current) {
+            console.log('Redrawing chart for:', stock.account.symbol);
+            drawChart();
+          }
+        }, 100);
+      } else {
+        console.error('Stock not found with key:', stockKey);
+        toast.error('Stock not found. Please try refreshing the stocks list.');
+      }
+    } catch (error) {
+      console.error('Error selecting stock:', error);
+      toast.error('Error selecting stock. Please try again.');
     }
   };
   
@@ -363,6 +442,30 @@ const IntraDayTradingFeature = () => {
     
     const quantityValue = parseFloat(quantity);
     const currentPrice = selectedStock.account.current_price;
+    
+    // Additional validation for buy/sell
+    if (orderType === 'buy') {
+      // Check if there are enough available shares
+      if (quantityValue > selectedStock.account.available_supply) {
+        toast.error(`Not enough shares available. Only ${selectedStock.account.available_supply} shares available.`);
+        return;
+      }
+    } else {
+      // Check if user owns enough shares to sell
+      const position = portfolio.find(p => 
+        p.stockPublicKey.toString() === selectedStock.publicKey.toString()
+      );
+      
+      if (!position) {
+        toast.error('You don\'t own any shares of this stock');
+        return;
+      }
+      
+      if (quantityValue > position.quantity) {
+        toast.error(`You only have ${position.quantity} shares to sell`);
+        return;
+      }
+    }
     
     setIsLoading(true);
     
@@ -454,45 +557,127 @@ const IntraDayTradingFeature = () => {
     );
   };
   
-  // Force refresh stocks
-  const handleRefreshStocks = () => {
+  // Improve handleRefreshStocks function
+  const handleRefreshStocks = async () => {
+    // Only proceed if wallet is connected
+    if (!publicKey) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+    
+    // Save currently selected stock if any
+    const currentSelectedStock = selectedStock;
+    const currentSelectedStockKey = currentSelectedStock?.publicKey.toString();
+    
     setIsLoading(true);
+    console.log('Refreshing stocks...');
+    
     try {
-      if (!publicKey) {
-        toast.error('Wallet not connected');
-        return;
+      // Fetch stocks
+      console.log('Loading stocks for wallet:', publicKey.toString());
+      const stockAccounts = loadStocks(publicKey);
+      console.log(`Loaded ${stockAccounts.length} stocks`);
+      
+      if (stockAccounts.length === 0) {
+        toast.error('No stocks found. Please create some stocks first.');
       }
       
-      console.log('Forcing stock refresh for wallet:', publicKey.toString());
-      const refreshedStocks = loadStocks(publicKey);
-      console.log(`Refreshed ${refreshedStocks.length} stocks`);
-      setStocks(refreshedStocks);
+      // Update stocks state
+      setStocks(stockAccounts);
       
       // Initialize price history for all stocks
       const initialPriceHistory: PriceHistory = {};
-      refreshedStocks.forEach(stock => {
-        initialPriceHistory[stock.publicKey.toString()] = generateInitialPriceHistory(stock.account.current_price);
+      stockAccounts.forEach(stock => {
+        const stockKey = stock.publicKey.toString();
+        // Use existing price history if available, otherwise create new
+        initialPriceHistory[stockKey] = priceHistory[stockKey] || 
+          generateInitialPriceHistory(stock.account.current_price);
       });
       setPriceHistory(initialPriceHistory);
       
-      // If no selected stock but we have stocks, select the first one
-      if ((!selectedStock || !refreshedStocks.find(s => s.publicKey.toString() === selectedStock.publicKey.toString())) 
-          && refreshedStocks.length > 0) {
-        const firstStock = refreshedStocks[0];
-        console.log('Setting selected stock to:', firstStock.account.symbol);
-        setSelectedStock(firstStock);
+      // If we had a selected stock, try to find it in the refreshed list
+      if (currentSelectedStock && currentSelectedStockKey) {
+        console.log('Looking for previously selected stock:', currentSelectedStockKey);
+        
+        const refreshedStock = stockAccounts.find(
+          s => s.publicKey.toString() === currentSelectedStockKey
+        );
+        
+        if (refreshedStock) {
+          console.log('Found previously selected stock in refreshed list:', refreshedStock.account.symbol);
+          setSelectedStock(refreshedStock);
+          
+          // Update ticker data
+          const price = refreshedStock.account.current_price;
+          setLastTickData({
+            price,
+            change: 0,
+            timestamp: Date.now(),
+            volume: Math.floor(Math.random() * 1000) + 100
+          });
+        } else {
+          console.log('Previously selected stock not found in refreshed list');
+          
+          // If we still have the current selected stock in memory, keep it
+          if (currentSelectedStock) {
+            console.log('Keeping current selection in memory');
+            
+            // Keep it in the stocks list too
+            setStocks(prevStocks => {
+              const exists = prevStocks.some(s => 
+                s.publicKey.toString() === currentSelectedStockKey
+              );
+              
+              if (!exists) {
+                console.log('Adding current selection back to stocks list');
+                return [...stockAccounts, currentSelectedStock];
+              }
+              
+              return stockAccounts;
+            });
+            
+            // Keep the current selection but warn the user
+            toast.error('Selected stock not found in refreshed list. Using cached data.');
+          } else if (stockAccounts.length > 0) {
+            // If no selected stock was kept, select the first one
+            console.log('Selecting first stock from refreshed list:', stockAccounts[0].account.symbol);
+            setSelectedStock(stockAccounts[0]);
+            
+            const price = stockAccounts[0].account.current_price;
+            setLastTickData({
+              price,
+              change: 0,
+              timestamp: Date.now(),
+              volume: Math.floor(Math.random() * 1000) + 100
+            });
+          }
+        }
+      } else if (stockAccounts.length > 0) {
+        // If no stock was previously selected but we have stocks, select the first one
+        console.log('No previously selected stock, selecting first stock:', stockAccounts[0].account.symbol);
+        setSelectedStock(stockAccounts[0]);
+        
+        const price = stockAccounts[0].account.current_price;
         setLastTickData({
-          price: firstStock.account.current_price,
-          timestamp: Date.now(),
+          price,
           change: 0,
+          timestamp: Date.now(),
           volume: Math.floor(Math.random() * 1000) + 100
         });
       }
       
-      toast.success(`${refreshedStocks.length} stocks loaded`);
+      toast.success('Stocks refreshed successfully');
     } catch (error) {
       console.error('Error refreshing stocks:', error);
-      toast.error('Failed to refresh stocks');
+      
+      // More detailed error logging
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+      
+      toast.error('Failed to refresh stocks. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -720,7 +905,7 @@ const IntraDayTradingFeature = () => {
         </div>
         
         {/* Order form */}
-        <div className="bg-slate-700/50 rounded-xl p-4 mb-6">
+        <div id="orderForm" className="bg-slate-700/50 rounded-xl p-4 mb-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
             {/* Order type */}
             <div>
@@ -761,12 +946,38 @@ const IntraDayTradingFeature = () => {
               <input
                 id="quantity"
                 type="number"
-                min="0"
+                min="1"
                 step="1"
                 className="w-full bg-slate-600 text-white rounded-lg px-3 py-2 border border-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || parseFloat(value) >= 0) {
+                    setQuantity(value);
+                  }
+                }}
+                onBlur={() => {
+                  // Validate quantity on blur
+                  if (quantity && parseFloat(quantity) <= 0) {
+                    setQuantity('1');
+                  }
+                  
+                  // Convert to integer (whole shares)
+                  if (quantity && quantity.includes('.')) {
+                    setQuantity(Math.floor(parseFloat(quantity)).toString());
+                  }
+                }}
               />
+              {orderType === 'sell' && selectedStock && portfolio.length > 0 && (
+                <p className="text-xs text-slate-400 mt-1">
+                  You own: {portfolio.find(p => p.stockPublicKey.toString() === selectedStock.publicKey.toString())?.quantity || 0} shares
+                </p>
+              )}
+              {orderType === 'buy' && selectedStock && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Available: {selectedStock.account.available_supply} shares
+                </p>
+              )}
             </div>
             
             {/* Price (read-only) */}
@@ -854,18 +1065,104 @@ const IntraDayTradingFeature = () => {
                           {pnlPercentage.toFixed(2)}%
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm">
-                          <button 
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white py-1 px-3 rounded-md text-sm font-medium"
-                            onClick={() => {
-                              const stock = stocks.find(s => s.publicKey.toString() === position.stockPublicKey.toString());
-                              if (stock) {
+                          <div className="flex space-x-2">
+                            <button 
+                              className="bg-green-600 hover:bg-green-700 text-white py-1 px-2 rounded-md text-sm font-medium"
+                              onClick={() => {
+                                // Find stock in current stocks list
+                                let stock = stocks.find(s => s.publicKey.toString() === position.stockPublicKey.toString());
+                                
+                                // If not found in stocks list, create a temporary stock from position data
+                                if (!stock) {
+                                  console.log('Stock not found in stocks list, creating temporary stock');
+                                  
+                                  // Create a new stock from position data
+                                  stock = {
+                                    publicKey: position.stockPublicKey,
+                                    account: {
+                                      name: position.name,
+                                      symbol: position.symbol,
+                                      current_price: position.currentPrice,
+                                      total_supply: 10000, // Default value
+                                      available_supply: 1000, // Default value
+                                      authority: publicKey || new PublicKey('11111111111111111111111111111111')
+                                    }
+                                  };
+                                  
+                                  // Add to stocks list
+                                  setStocks(prevStocks => [...prevStocks, stock!]);
+                                  
+                                  // Create price history for this stock
+                                  if (!priceHistory[position.stockPublicKey.toString()]) {
+                                    const newPriceHistory = { ...priceHistory };
+                                    newPriceHistory[position.stockPublicKey.toString()] = 
+                                      generateInitialPriceHistory(position.currentPrice);
+                                    setPriceHistory(newPriceHistory);
+                                  }
+                                }
+                                
+                                setSelectedStock(stock);
+                                setOrderType('buy');
+                                // Focus on the stock in the selector
+                                document.getElementById('stockSelect')?.focus();
+                                // Set quantity to 10% of position by default for buy
+                                const defaultBuyAmount = Math.max(1, Math.floor(position.quantity * 0.1));
+                                setQuantity(defaultBuyAmount.toString());
+                                // Scroll to the order form
+                                document.getElementById('orderForm')?.scrollIntoView({ behavior: 'smooth' });
+                              }}
+                            >
+                              Buy
+                            </button>
+                            <button 
+                              className="bg-red-600 hover:bg-red-700 text-white py-1 px-2 rounded-md text-sm font-medium"
+                              onClick={() => {
+                                // Find stock in current stocks list
+                                let stock = stocks.find(s => s.publicKey.toString() === position.stockPublicKey.toString());
+                                
+                                // If not found in stocks list, create a temporary stock from position data
+                                if (!stock) {
+                                  console.log('Stock not found in stocks list, creating temporary stock');
+                                  
+                                  // Create a new stock from position data
+                                  stock = {
+                                    publicKey: position.stockPublicKey,
+                                    account: {
+                                      name: position.name,
+                                      symbol: position.symbol,
+                                      current_price: position.currentPrice,
+                                      total_supply: 10000, // Default value
+                                      available_supply: 1000, // Default value
+                                      authority: publicKey || new PublicKey('11111111111111111111111111111111')
+                                    }
+                                  };
+                                  
+                                  // Add to stocks list
+                                  setStocks(prevStocks => [...prevStocks, stock!]);
+                                  
+                                  // Create price history for this stock
+                                  if (!priceHistory[position.stockPublicKey.toString()]) {
+                                    const newPriceHistory = { ...priceHistory };
+                                    newPriceHistory[position.stockPublicKey.toString()] = 
+                                      generateInitialPriceHistory(position.currentPrice);
+                                    setPriceHistory(newPriceHistory);
+                                  }
+                                }
+                                
                                 setSelectedStock(stock);
                                 setOrderType('sell');
-                              }
-                            }}
-                          >
-                            Trade
-                          </button>
+                                // Focus on the stock in the selector
+                                document.getElementById('stockSelect')?.focus();
+                                // Set quantity to 10% of position by default for sell
+                                const defaultSellAmount = Math.max(1, Math.floor(position.quantity * 0.1));
+                                setQuantity(defaultSellAmount.toString());
+                                // Scroll to the order form
+                                document.getElementById('orderForm')?.scrollIntoView({ behavior: 'smooth' });
+                              }}
+                            >
+                              Sell
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

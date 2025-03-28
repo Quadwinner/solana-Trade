@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ellipsify } from '../ui/ui-layout';
 import { ExplorerLink } from '../cluster/cluster-ui';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { toast } from 'react-hot-toast';
 
 interface StockCardProps {
   stockAccount: {
@@ -55,12 +56,44 @@ export function StockCard({ stockAccount }: StockCardProps) {
   
   const handleIntraday = () => {
     // Navigate to intraday trading with this stock selected
-    navigate('/dashboard', { 
-      state: { 
-        activeTab: 'intraday',
-        selectedStock: stockAccount
-      }
-    });
+    console.log('Navigating to intraday with stock:', stockAccount.publicKey.toString());
+    
+    try {
+      // Ensure we have proper PublicKey objects
+      const validStock = {
+        publicKey: stockAccount.publicKey instanceof PublicKey 
+          ? stockAccount.publicKey 
+          : new PublicKey(stockAccount.publicKey),
+        account: {
+          ...stockAccount.account,
+          authority: stockAccount.account.authority instanceof PublicKey
+            ? stockAccount.account.authority
+            : new PublicKey(stockAccount.account.authority)
+        }
+      };
+      
+      // Create a serializable version for logging only
+      const serializableStock = {
+        publicKey: validStock.publicKey.toString(),
+        account: {
+          ...validStock.account,
+          authority: validStock.account.authority.toString()
+        }
+      };
+      
+      console.log('Prepared stock for intraday:', serializableStock);
+      
+      // Navigate to the dashboard with intraday tab active
+      navigate('/dashboard', { 
+        state: { 
+          activeTab: 'intraday',
+          selectedStock: validStock // Pass the proper stock with PublicKey objects
+        }
+      });
+    } catch (error) {
+      console.error('Error navigating to intraday view:', error);
+      toast.error('Error opening intraday trading. Please try again.');
+    }
   };
 
   // Calculate market cap
