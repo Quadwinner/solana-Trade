@@ -52,6 +52,16 @@ export function StockCard({ stockAccount }: StockCardProps) {
       }
     });
   };
+  
+  const handleIntraday = () => {
+    // Navigate to intraday trading with this stock selected
+    navigate('/dashboard', { 
+      state: { 
+        activeTab: 'intraday',
+        selectedStock: stockAccount
+      }
+    });
+  };
 
   // Calculate market cap
   const marketCap = current_price * total_supply;
@@ -129,15 +139,20 @@ export function StockCard({ stockAccount }: StockCardProps) {
             />
           </div>
           
-          <button
-            className="btn-3d btn-gradient shadow-lg shadow-blue-600/20 rounded-xl px-6 py-2 transform transition-all duration-200 hover:scale-105 text-white font-medium"
-            onClick={handleTrade}
-          >
-            <svg className="w-4 h-4 mr-2 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
-            Trade Now
-          </button>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <button 
+              className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors"
+              onClick={handleTrade}
+            >
+              Trade
+            </button>
+            <button 
+              className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors"
+              onClick={handleIntraday}
+            >
+              Intraday
+            </button>
+          </div>
         </div>
       </div>
     </div>

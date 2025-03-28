@@ -8,11 +8,12 @@ import { MarketplaceFeature } from '../trading/MarketplaceFeature'
 import { PortfolioFeature } from '../trading/PortfolioFeature'
 import { RealTimeStockData } from '../trading/RealTimeStockData'
 import { SimplifiedTradeForm } from '../trading/SimplifiedTradeForm'
+import IntraDayWrapper from '../trading/intraday-wrapper'
 import { PublicKey } from '@solana/web3.js'
 
 export default function DashboardFeature() {
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'trade' | 'create' | 'allstocks'>('market')
+  const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'trade' | 'create' | 'allstocks' | 'intraday'>('market')
   const [selectedStockForTrading, setSelectedStockForTrading] = useState<any>(null);
   const [tradeOrderType, setTradeOrderType] = useState<'buy' | 'sell'>('buy');
 
@@ -107,6 +108,11 @@ export default function DashboardFeature() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
               </svg>
             )},
+            { id: 'intraday', label: 'Intraday', icon: (
+              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            )},
             { id: 'allstocks', label: 'All Stocks', icon: (
               <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
@@ -141,7 +147,7 @@ export default function DashboardFeature() {
         {/* Dashboard Content */}
         <div className="page-transition">
           {/* Market Overview Panel - Always visible except for certain tabs */}
-          {activeTab !== 'market' && activeTab !== 'portfolio' && activeTab !== 'allstocks' && (
+          {activeTab !== 'market' && activeTab !== 'portfolio' && activeTab !== 'allstocks' && activeTab !== 'intraday' && (
             <div className="mb-8">
               <div className="card-shine">
                 <MarketOverview />
@@ -154,6 +160,7 @@ export default function DashboardFeature() {
             {activeTab === 'market' && <MarketplaceFeature />}
             {activeTab === 'portfolio' && <PortfolioFeature />}
             {activeTab === 'allstocks' && <RealTimeStockData />}
+            {activeTab === 'intraday' && <IntraDayWrapper />}
             {activeTab === 'trade' && (
               <SimplifiedTradeForm 
                 initialStock={selectedStockForTrading} 

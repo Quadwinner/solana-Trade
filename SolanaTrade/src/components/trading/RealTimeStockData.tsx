@@ -212,6 +212,23 @@ export function RealTimeStockData() {
     }
   };
 
+  // Navigate to the intraday tab with the selected stock
+  const handleIntradayClick = (stock: MockStock) => {
+    try {
+      console.log("Navigating to intraday with stock:", stock.publicKey.toString());
+      
+      navigate('/dashboard', { 
+        state: { 
+          activeTab: 'intraday',
+          selectedStock: stock
+        }
+      });
+    } catch (error) {
+      console.error("Error navigating to intraday:", error);
+      toast.error("Error opening intraday trading. Please try again.");
+    }
+  };
+
   if (!publicKey) {
     return (
       <div className="alert alert-info">
@@ -397,16 +414,22 @@ export function RealTimeStockData() {
                       <td className="px-6 py-4">
                         <div className="flex space-x-2">
                           <button
+                            className="text-xs bg-green-700 hover:bg-green-800 text-white px-2 py-1 rounded"
                             onClick={() => handleTradeClick(stock, 'buy')}
-                            className="btn-3d bg-gradient-to-r from-green-500 to-emerald-600 shadow-green-600/20 text-white px-3 py-1.5 rounded-lg font-medium text-sm"
                           >
                             Buy
                           </button>
                           <button
+                            className="text-xs bg-red-700 hover:bg-red-800 text-white px-2 py-1 rounded"
                             onClick={() => handleTradeClick(stock, 'sell')}
-                            className="btn-3d bg-gradient-to-r from-rose-500 to-red-600 shadow-rose-600/20 text-white px-3 py-1.5 rounded-lg font-medium text-sm"
                           >
                             Sell
+                          </button>
+                          <button
+                            className="text-xs bg-purple-700 hover:bg-purple-800 text-white px-2 py-1 rounded"
+                            onClick={() => handleIntradayClick(stock)}
+                          >
+                            Intraday
                           </button>
                         </div>
                       </td>

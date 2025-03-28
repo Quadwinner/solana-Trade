@@ -18,6 +18,7 @@ const links: { label: string; path: string }[] = [
   { label: 'Dashboard', path: '/dashboard' },
   { label: 'Portfolio', path: '/portfolio' },
   { label: 'Marketplace', path: '/marketplace' },
+  { label: 'Intraday', path: '/intraday' },
   { label: 'Account', path: '/account' },
   { label: 'Clusters', path: '/clusters' },
   { label: 'Admin', path: '/admin' },
@@ -64,6 +65,16 @@ export function AppRoutes() {
         <UiLayout links={links}>
           <ProtectedRoute>
             <MarketplaceFeature />
+          </ProtectedRoute>
+        </UiLayout>
+      )
+    },
+    { 
+      path: '/intraday', 
+      element: (
+        <UiLayout links={links}>
+          <ProtectedRoute>
+            <Navigate to="/dashboard" state={{ activeTab: 'intraday' }} replace={true} />
           </ProtectedRoute>
         </UiLayout>
       )
