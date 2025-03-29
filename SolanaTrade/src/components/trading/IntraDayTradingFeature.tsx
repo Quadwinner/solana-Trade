@@ -380,6 +380,11 @@ const IntraDayTradingFeature = () => {
     const stockKey = event.target.value;
     console.log('Stock selected with key:', stockKey);
     
+    if (!stockKey) {
+      console.log('No stock key selected');
+      return;
+    }
+    
     try {
       const stock = stocks.find(s => s.publicKey.toString() === stockKey);
       if (stock) {
@@ -415,7 +420,15 @@ const IntraDayTradingFeature = () => {
         }, 100);
       } else {
         console.error('Stock not found with key:', stockKey);
-        toast.error('Stock not found. Please try refreshing the stocks list.');
+        // Log all available stock keys for debugging
+        console.log('Available stocks:', stocks.map(s => ({
+          key: s.publicKey.toString(),
+          symbol: s.account.symbol
+        })));
+        
+        // Try to refresh the stocks before showing error
+        toast.error('Stock not found. Attempting to refresh stocks list...');
+        handleRefreshStocks();
       }
     } catch (error) {
       console.error('Error selecting stock:', error);
@@ -443,6 +456,14 @@ const IntraDayTradingFeature = () => {
     const quantityValue = parseFloat(quantity);
     const currentPrice = selectedStock.account.current_price;
     
+    console.log('Submit order details:', {
+      type: orderType,
+      stock: selectedStock.account.symbol,
+      stockKey: selectedStock.publicKey.toString(),
+      quantity: quantityValue,
+      price: currentPrice
+    });
+    
     // Additional validation for buy/sell
     if (orderType === 'buy') {
       // Check if there are enough available shares
@@ -456,18 +477,33 @@ const IntraDayTradingFeature = () => {
         p.stockPublicKey.toString() === selectedStock.publicKey.toString()
       );
       
-      if (!position) {
+      // If not found by exact key, try by symbol
+      let foundPosition = position;
+      if (!foundPosition) {
+        foundPosition = portfolio.find(p => p.symbol === selectedStock.account.symbol);
+        
+        if (foundPosition) {
+          console.log('Found position by symbol instead of key:', {
+            symbol: foundPosition.symbol,
+            positionKey: foundPosition.stockPublicKey.toString(),
+            stockKey: selectedStock.publicKey.toString()
+          });
+        }
+      }
+      
+      if (!foundPosition) {
         toast.error('You don\'t own any shares of this stock');
         return;
       }
       
-      if (quantityValue > position.quantity) {
-        toast.error(`You only have ${position.quantity} shares to sell`);
+      if (quantityValue > foundPosition.quantity) {
+        toast.error(`You only have ${foundPosition.quantity} shares to sell`);
         return;
       }
     }
     
     setIsLoading(true);
+    toast.loading(`Processing ${orderType} order...`);
     
     try {
       let success = false;
@@ -487,6 +523,9 @@ const IntraDayTradingFeature = () => {
           currentPrice
         );
       }
+      
+      // Clear all toasts including the loading one
+      toast.dismiss();
       
       if (success) {
         toast.success(`${orderType === 'buy' ? 'Buy' : 'Sell'} order executed successfully`);
@@ -510,11 +549,23 @@ const IntraDayTradingFeature = () => {
         // Clear quantity
         setQuantity('');
       } else {
-        toast.error(`Failed to execute ${orderType} order`);
+        console.error('Order execution returned false');
+        toast.error(`Failed to execute ${orderType} order. Check console for details.`);
       }
     } catch (error) {
+      toast.dismiss(); // Clear the loading toast
       console.error('Error executing order:', error);
-      toast.error('Transaction failed');
+      
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+        toast.error(`Transaction failed: ${error.message}`);
+      } else {
+        toast.error('Transaction failed. Check console for details.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -622,22 +673,23 @@ const IntraDayTradingFeature = () => {
           if (currentSelectedStock) {
             console.log('Keeping current selection in memory');
             
-            // Keep it in the stocks list too
+            // Add it to the stocks list to ensure it's available for selection
             setStocks(prevStocks => {
+              // Check if it exists in the current list
               const exists = prevStocks.some(s => 
                 s.publicKey.toString() === currentSelectedStockKey
               );
               
               if (!exists) {
                 console.log('Adding current selection back to stocks list');
-                return [...stockAccounts, currentSelectedStock];
+                return [...prevStocks, currentSelectedStock];
               }
               
-              return stockAccounts;
+              return prevStocks;
             });
             
             // Keep the current selection but warn the user
-            toast.error('Selected stock not found in refreshed list. Using cached data.');
+            toast.error('Selected stock not found in refreshed data. Using cached version.');
           } else if (stockAccounts.length > 0) {
             // If no selected stock was kept, select the first one
             console.log('Selecting first stock from refreshed list:', stockAccounts[0].account.symbol);
@@ -678,6 +730,19 @@ const IntraDayTradingFeature = () => {
       }
       
       toast.error('Failed to refresh stocks. Please try again.');
+      
+      // Attempt to recover by loading initial stocks if localStorage might be corrupted
+      try {
+        localStorage.removeItem('force_reset_stocks');
+        const recoveryStocks = loadStocks(publicKey);
+        if (recoveryStocks.length > 0) {
+          setStocks(recoveryStocks);
+          setSelectedStock(recoveryStocks[0]);
+          toast.success('Recovered with initial stocks');
+        }
+      } catch (recoveryError) {
+        console.error('Recovery attempt failed:', recoveryError);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -750,20 +815,45 @@ const IntraDayTradingFeature = () => {
               value={selectedStock?.publicKey.toString() || ''}
               onChange={handleStockSelect}
             >
-              {stocks.length === 0 ? (
+              {isLoading ? (
+                <option value="" disabled>Loading stocks...</option>
+              ) : stocks.length === 0 ? (
                 <option value="" disabled>No stocks available</option>
               ) : (
-                stocks.map(stock => (
-                  <option key={stock.publicKey.toString()} value={stock.publicKey.toString()}>
-                    {stock.account.name} ({stock.account.symbol})
-                  </option>
-                ))
+                <>
+                  <option value="" disabled>Select a stock</option>
+                  {stocks.map(stock => (
+                    <option key={stock.publicKey.toString()} value={stock.publicKey.toString()}>
+                      {stock.account.name} ({stock.account.symbol}) - ${stock.account.current_price.toFixed(2)}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
-            {stocks.length === 0 && (
+            {stocks.length === 0 && !isLoading && (
               <p className="text-xs text-red-400 mt-1">
                 No stocks found. Please try refreshing or create a stock first.
               </p>
+            )}
+            {selectedStock === null && stocks.length > 0 && !isLoading && (
+              <div className="mt-2">
+                <button 
+                  onClick={() => {
+                    // Auto-select first stock if none is selected
+                    const firstStock = stocks[0];
+                    setSelectedStock(firstStock);
+                    setLastTickData({
+                      price: firstStock.account.current_price,
+                      timestamp: Date.now(),
+                      change: 0,
+                      volume: Math.floor(Math.random() * 500) + 50
+                    });
+                  }}
+                  className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white py-1 px-2 rounded-md"
+                >
+                  Auto-select first stock
+                </button>
+              </div>
             )}
           </div>
           
@@ -1072,13 +1162,50 @@ const IntraDayTradingFeature = () => {
                                 // Find stock in current stocks list
                                 let stock = stocks.find(s => s.publicKey.toString() === position.stockPublicKey.toString());
                                 
-                                // If not found in stocks list, create a temporary stock from position data
+                                // If not found by exact key, try finding by symbol
+                                if (!stock) {
+                                  stock = stocks.find(s => s.account.symbol === position.symbol);
+                                  if (stock) {
+                                    console.log('Found stock by symbol instead of key:', {
+                                      symbol: position.symbol,
+                                      positionKey: String(position.stockPublicKey),
+                                      stockKey: stock.publicKey.toString()
+                                    });
+                                    
+                                    // Update position stockPublicKey to match the found stock
+                                    position.stockPublicKey = stock.publicKey;
+                                  }
+                                }
+                                
+                                // If still not found in stocks list, create a temporary stock from position data
                                 if (!stock) {
                                   console.log('Stock not found in stocks list, creating temporary stock');
                                   
+                                  // Ensure we have a valid PublicKey
+                                  let stockPublicKey: PublicKey;
+                                  try {
+                                    // Use the existing position's PublicKey if valid
+                                    if (position.stockPublicKey instanceof PublicKey) {
+                                      stockPublicKey = position.stockPublicKey;
+                                    } else {
+                                      // This should never happen due to proper loading, but just in case
+                                      stockPublicKey = new PublicKey(position.stockPublicKey.toString());
+                                    }
+                                  } catch (e) {
+                                    console.error('Invalid public key, creating new one');
+                                    // Use a deterministic approach if the key is invalid
+                                    const seedBytes = new Uint8Array(32);
+                                    const seed = position.symbol + '-' + (publicKey?.toString() || '');
+                                    for (let i = 0; i < seed.length && i < 32; i++) {
+                                      seedBytes[i] = seed.charCodeAt(i);
+                                    }
+                                    if (seedBytes[0] === 0) seedBytes[0] = 1;
+                                    stockPublicKey = new PublicKey(seedBytes);
+                                  }
+                                  
                                   // Create a new stock from position data
                                   stock = {
-                                    publicKey: position.stockPublicKey,
+                                    publicKey: stockPublicKey,
                                     account: {
                                       name: position.name,
                                       symbol: position.symbol,
@@ -1089,13 +1216,26 @@ const IntraDayTradingFeature = () => {
                                     }
                                   };
                                   
+                                  console.log('Created temporary stock:', {
+                                    symbol: stock.account.symbol,
+                                    publicKey: stock.publicKey.toString()
+                                  });
+                                  
                                   // Add to stocks list
-                                  setStocks(prevStocks => [...prevStocks, stock!]);
+                                  setStocks(prevStocks => {
+                                    // Check if a stock with this key already exists
+                                    const exists = prevStocks.some(s => s.publicKey.toString() === stock!.publicKey.toString());
+                                    if (exists) {
+                                      console.log('Stock with this key already exists in the list');
+                                      return prevStocks;
+                                    }
+                                    return [...prevStocks, stock!];
+                                  });
                                   
                                   // Create price history for this stock
-                                  if (!priceHistory[position.stockPublicKey.toString()]) {
+                                  if (!priceHistory[stockPublicKey.toString()]) {
                                     const newPriceHistory = { ...priceHistory };
-                                    newPriceHistory[position.stockPublicKey.toString()] = 
+                                    newPriceHistory[stockPublicKey.toString()] = 
                                       generateInitialPriceHistory(position.currentPrice);
                                     setPriceHistory(newPriceHistory);
                                   }
@@ -1120,13 +1260,50 @@ const IntraDayTradingFeature = () => {
                                 // Find stock in current stocks list
                                 let stock = stocks.find(s => s.publicKey.toString() === position.stockPublicKey.toString());
                                 
-                                // If not found in stocks list, create a temporary stock from position data
+                                // If not found by exact key, try finding by symbol
+                                if (!stock) {
+                                  stock = stocks.find(s => s.account.symbol === position.symbol);
+                                  if (stock) {
+                                    console.log('Found stock by symbol instead of key:', {
+                                      symbol: position.symbol,
+                                      positionKey: String(position.stockPublicKey),
+                                      stockKey: stock.publicKey.toString()
+                                    });
+                                    
+                                    // Update position stockPublicKey to match the found stock
+                                    position.stockPublicKey = stock.publicKey;
+                                  }
+                                }
+                                
+                                // If still not found in stocks list, create a temporary stock from position data
                                 if (!stock) {
                                   console.log('Stock not found in stocks list, creating temporary stock');
                                   
+                                  // Ensure we have a valid PublicKey
+                                  let stockPublicKey: PublicKey;
+                                  try {
+                                    // Use the existing position's PublicKey if valid
+                                    if (position.stockPublicKey instanceof PublicKey) {
+                                      stockPublicKey = position.stockPublicKey;
+                                    } else {
+                                      // This should never happen due to proper loading, but just in case
+                                      stockPublicKey = new PublicKey(position.stockPublicKey.toString());
+                                    }
+                                  } catch (e) {
+                                    console.error('Invalid public key, creating new one');
+                                    // Use a deterministic approach if the key is invalid
+                                    const seedBytes = new Uint8Array(32);
+                                    const seed = position.symbol + '-' + (publicKey?.toString() || '');
+                                    for (let i = 0; i < seed.length && i < 32; i++) {
+                                      seedBytes[i] = seed.charCodeAt(i);
+                                    }
+                                    if (seedBytes[0] === 0) seedBytes[0] = 1;
+                                    stockPublicKey = new PublicKey(seedBytes);
+                                  }
+                                  
                                   // Create a new stock from position data
                                   stock = {
-                                    publicKey: position.stockPublicKey,
+                                    publicKey: stockPublicKey,
                                     account: {
                                       name: position.name,
                                       symbol: position.symbol,
@@ -1137,13 +1314,26 @@ const IntraDayTradingFeature = () => {
                                     }
                                   };
                                   
+                                  console.log('Created temporary stock:', {
+                                    symbol: stock.account.symbol,
+                                    publicKey: stock.publicKey.toString()
+                                  });
+                                  
                                   // Add to stocks list
-                                  setStocks(prevStocks => [...prevStocks, stock!]);
+                                  setStocks(prevStocks => {
+                                    // Check if a stock with this key already exists
+                                    const exists = prevStocks.some(s => s.publicKey.toString() === stock!.publicKey.toString());
+                                    if (exists) {
+                                      console.log('Stock with this key already exists in the list');
+                                      return prevStocks;
+                                    }
+                                    return [...prevStocks, stock!];
+                                  });
                                   
                                   // Create price history for this stock
-                                  if (!priceHistory[position.stockPublicKey.toString()]) {
+                                  if (!priceHistory[stockPublicKey.toString()]) {
                                     const newPriceHistory = { ...priceHistory };
-                                    newPriceHistory[position.stockPublicKey.toString()] = 
+                                    newPriceHistory[stockPublicKey.toString()] = 
                                       generateInitialPriceHistory(position.currentPrice);
                                     setPriceHistory(newPriceHistory);
                                   }

@@ -76,6 +76,8 @@ export function saveStocks(stocks: MockStock[]): void {
 // Load mock stocks from localStorage - now using a global key
 export function loadStocks(currentAuthority: PublicKey): MockStock[] {
   try {
+    console.log('Loading stocks for authority:', currentAuthority.toString());
+    
     // First check if we need to force reset
     const needsReset = localStorage.getItem('force_reset_stocks');
     
@@ -90,39 +92,97 @@ export function loadStocks(currentAuthority: PublicKey): MockStock[] {
     
     const stocksJson = localStorage.getItem(getGlobalStocksKey());
     if (!stocksJson) {
+      console.log('No stocks found in localStorage, creating initial stocks');
       const initialStocks = getInitialStocks(currentAuthority);
       saveStocks(initialStocks);
       return initialStocks;
     }
     
-    const stocksData = JSON.parse(stocksJson);
     try {
-      const stocks = stocksData.map((stock: any) => ({
-        publicKey: new PublicKey(stock.publicKey),
-        account: {
-          ...stock.account,
-          authority: new PublicKey(stock.account.authority)
-        }
-      }));
+      console.log('Parsing stocks data from localStorage');
+      const stocksData = JSON.parse(stocksJson);
       
-      if (stocks.length === 0) {
-        console.log('No stocks found, loading initial stocks');
+      if (!Array.isArray(stocksData)) {
+        console.error('Stocks data is not an array:', stocksData);
         const initialStocks = getInitialStocks(currentAuthority);
         saveStocks(initialStocks);
         return initialStocks;
       }
       
+      console.log(`Found ${stocksData.length} stocks in localStorage`);
+      
+      const stocks: MockStock[] = [];
+      
+      // Safely convert each stock, skipping any that cause errors
+      for (const stock of stocksData) {
+        try {
+          // Validate required fields
+          if (!stock.publicKey || !stock.account || !stock.account.authority) {
+            console.warn('Stock missing required fields:', stock);
+            continue;
+          }
+          
+          // Safely create PublicKey objects
+          let publicKey: PublicKey;
+          let authority: PublicKey;
+          
+          try {
+            publicKey = new PublicKey(stock.publicKey);
+          } catch (e) {
+            console.warn('Invalid public key:', stock.publicKey);
+            continue;
+          }
+          
+          try {
+            authority = new PublicKey(stock.account.authority);
+          } catch (e) {
+            console.warn('Invalid authority key:', stock.account.authority);
+            continue;
+          }
+          
+          // Create stock object with proper PublicKey instances
+          const validStock: MockStock = {
+            publicKey,
+            account: {
+              name: stock.account.name || 'Unknown Stock',
+              symbol: stock.account.symbol || 'UNKNOWN',
+              total_supply: Number(stock.account.total_supply) || 1000,
+              available_supply: Number(stock.account.available_supply) || 1000,
+              current_price: Number(stock.account.current_price) || 100,
+              authority
+            }
+          };
+          
+          stocks.push(validStock);
+        } catch (stockError) {
+          console.warn('Error processing stock:', stockError);
+          continue;
+        }
+      }
+      
+      if (stocks.length === 0) {
+        console.log('No valid stocks found after parsing, loading initial stocks');
+        const initialStocks = getInitialStocks(currentAuthority);
+        saveStocks(initialStocks);
+        return initialStocks;
+      }
+      
+      console.log(`Successfully loaded ${stocks.length} valid stocks`);
       return stocks;
-    } catch (error) {
-      console.error('Error parsing stocks data:', error);
+    } catch (parsingError) {
+      console.error('Error parsing stocks data:', parsingError);
       const initialStocks = getInitialStocks(currentAuthority);
       saveStocks(initialStocks);
       return initialStocks;
     }
   } catch (error) {
-    console.error('Error loading stocks:', error);
+    console.error('Error loading stocks, using initial stocks:', error);
     const initialStocks = getInitialStocks(currentAuthority);
-    saveStocks(initialStocks);
+    try {
+      saveStocks(initialStocks);
+    } catch (saveError) {
+      console.error('Error saving initial stocks:', saveError);
+    }
     return initialStocks;
   }
 }
@@ -227,48 +287,116 @@ function getInitialStocks(currentAuthority: PublicKey): MockStock[] {
 // Load portfolio positions for a wallet
 export function loadPortfolio(walletPublicKey: PublicKey): PortfolioPosition[] {
   try {
-    const portfolioKey = `${PORTFOLIO_KEY}_${walletPublicKey.toString()}`;
-    const portfolioJson = localStorage.getItem(portfolioKey);
-    
-    if (!portfolioJson) {
-      console.log('No portfolio data found for wallet:', walletPublicKey.toString());
+    // Ensure we have a valid PublicKey
+    if (!walletPublicKey || !(walletPublicKey instanceof PublicKey)) {
+      console.error('Invalid wallet public key:', walletPublicKey);
       return [];
     }
     
-    console.log('Raw portfolio data from localStorage:', portfolioJson);
+    const walletKey = walletPublicKey.toString();
+    const portfolioKey = `${PORTFOLIO_KEY}_${walletKey}`;
     
-    const portfolioData = JSON.parse(portfolioJson);
+    console.log('Loading portfolio for wallet:', walletKey);
+    
+    const portfolioJson = localStorage.getItem(portfolioKey);
+    
+    if (!portfolioJson) {
+      console.log('No portfolio data found for wallet:', walletKey);
+      return [];
+    }
+    
+    console.log('Raw portfolio data from localStorage:', portfolioJson.substring(0, 100) + '...');
+    
+    let portfolioData;
+    try {
+      portfolioData = JSON.parse(portfolioJson);
+    } catch (parseError) {
+      console.error('Failed to parse portfolio JSON data:', parseError);
+      // Try to recover by clearing invalid data
+      localStorage.removeItem(portfolioKey);
+      return [];
+    }
     
     if (!Array.isArray(portfolioData)) {
       console.error('Portfolio data is not an array:', portfolioData);
+      // Clear invalid data
+      localStorage.removeItem(portfolioKey);
       return [];
     }
     
     console.log('Parsed portfolio data length:', portfolioData.length);
     
-    const convertedPositions = portfolioData.map((position: any) => {
+    const convertedPositions: PortfolioPosition[] = [];
+    
+    // Process each position carefully
+    for (const position of portfolioData) {
       try {
-        const convertedPosition = {
-          ...position,
-          stockPublicKey: new PublicKey(position.stockPublicKey),
-          quantity: Number(position.quantity) // Ensure quantity is a number
+        // Validate required fields
+        if (!position.stockPublicKey || !position.symbol) {
+          console.warn('Portfolio position missing required fields:', position);
+          continue;
+        }
+        
+        // Try to create a valid PublicKey
+        let stockPublicKey: PublicKey;
+        try {
+          stockPublicKey = new PublicKey(position.stockPublicKey);
+        } catch (keyError) {
+          console.warn('Invalid stock public key in portfolio:', position.stockPublicKey);
+          continue;
+        }
+        
+        // Create a valid position object with all fields
+        const convertedPosition: PortfolioPosition = {
+          stockPublicKey,
+          symbol: position.symbol || 'UNKNOWN',
+          name: position.name || position.symbol || 'Unknown Stock',
+          quantity: Number(position.quantity) || 0,
+          averagePrice: Number(position.averagePrice) || 0,
+          currentPrice: Number(position.currentPrice) || 0
         };
-        console.log('Converted position:', {
+        
+        // Skip positions with zero quantity
+        if (convertedPosition.quantity <= 0) {
+          console.log('Skipping zero-quantity position:', convertedPosition.symbol);
+          continue;
+        }
+        
+        console.log('Loaded position:', {
           symbol: convertedPosition.symbol,
-          quantity: convertedPosition.quantity
+          quantity: convertedPosition.quantity,
+          stockKey: stockPublicKey.toString()
         });
-        return convertedPosition;
-      } catch (error) {
-        console.error('Error converting position in portfolio:', error, position);
-        // Skip invalid entries
-        return null;
+        
+        convertedPositions.push(convertedPosition);
+      } catch (posError) {
+        console.warn('Error processing portfolio position:', posError);
+        continue;
       }
-    }).filter(Boolean) as PortfolioPosition[];
+    }
     
     console.log('Final portfolio positions count:', convertedPositions.length);
+    
+    // If the converted count is different, save the cleaned up version
+    if (convertedPositions.length !== portfolioData.length) {
+      try {
+        savePortfolio(walletPublicKey, convertedPositions);
+        console.log('Saved cleaned portfolio with', convertedPositions.length, 'positions');
+      } catch (saveError) {
+        console.error('Failed to save cleaned portfolio:', saveError);
+      }
+    }
+    
     return convertedPositions;
   } catch (error) {
     console.error('Error loading portfolio:', error);
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
     return [];
   }
 }
@@ -276,45 +404,91 @@ export function loadPortfolio(walletPublicKey: PublicKey): PortfolioPosition[] {
 // Save portfolio positions to localStorage
 export function savePortfolio(walletPublicKey: PublicKey, positions: PortfolioPosition[]): void {
   try {
-    const portfolioKey = `${PORTFOLIO_KEY}_${walletPublicKey.toString()}`;
+    // Ensure we have a valid PublicKey
+    if (!walletPublicKey || !(walletPublicKey instanceof PublicKey)) {
+      console.error('Invalid wallet public key for saving portfolio:', walletPublicKey);
+      return;
+    }
     
-    console.log('Saving portfolio for wallet:', walletPublicKey.toString());
+    const walletKey = walletPublicKey.toString();
+    const portfolioKey = `${PORTFOLIO_KEY}_${walletKey}`;
+    
+    console.log('Saving portfolio for wallet:', walletKey);
     console.log('Number of positions to save:', positions.length);
     
-    // Convert PublicKeys to strings for storage
-    const portfolioData = positions.map(position => {
-      // Create a clean object to ensure no unexpected properties
-      const cleanPosition = {
-        stockPublicKey: position.stockPublicKey.toString(),
-        symbol: position.symbol,
-        name: position.name,
-        quantity: Number(position.quantity),
-        averagePrice: Number(position.averagePrice),
-        currentPrice: Number(position.currentPrice)
-      };
-      
-      console.log('Saving position:', {
-        symbol: cleanPosition.symbol,
-        quantity: cleanPosition.quantity
-      });
-      
-      return cleanPosition;
+    // Filter out invalid positions
+    const validPositions = positions.filter(pos => {
+      if (!pos.stockPublicKey || !pos.symbol || pos.quantity <= 0) {
+        console.warn('Filtering out invalid position:', pos);
+        return false;
+      }
+      return true;
     });
     
-    const jsonData = JSON.stringify(portfolioData);
-    console.log('Portfolio data size in bytes:', jsonData.length);
+    console.log('Valid positions count after filtering:', validPositions.length);
     
-    localStorage.setItem(portfolioKey, jsonData);
-    console.log('Portfolio saved successfully');
+    // Convert PublicKeys to strings for storage
+    const portfolioData = validPositions.map(position => {
+      try {
+        // Ensure the stockPublicKey is a PublicKey object
+        const stockKey = position.stockPublicKey instanceof PublicKey
+          ? position.stockPublicKey.toString()
+          : position.stockPublicKey;
+          
+        // Create a clean object to ensure no unexpected properties
+        const cleanPosition = {
+          stockPublicKey: stockKey,
+          symbol: position.symbol,
+          name: position.name || position.symbol,
+          quantity: Number(position.quantity),
+          averagePrice: Number(position.averagePrice),
+          currentPrice: Number(position.currentPrice)
+        };
+        
+        console.log('Saving position:', {
+          symbol: cleanPosition.symbol,
+          quantity: cleanPosition.quantity,
+          stockKey: cleanPosition.stockPublicKey
+        });
+        
+        return cleanPosition;
+      } catch (e) {
+        console.error('Error processing position for saving:', e, position);
+        return null;
+      }
+    }).filter(Boolean);
     
-    // Verify the data was saved correctly
-    const savedData = localStorage.getItem(portfolioKey);
-    if (savedData) {
-      const parsedData = JSON.parse(savedData);
-      console.log('Verification - saved positions count:', parsedData.length);
+    // Only proceed if we have valid positions to save
+    if (portfolioData.length === 0 && validPositions.length > 0) {
+      console.error('Failed to process any positions for saving');
+      return;
+    }
+    
+    try {
+      const jsonData = JSON.stringify(portfolioData);
+      console.log('Portfolio data size in bytes:', jsonData.length);
+      
+      localStorage.setItem(portfolioKey, jsonData);
+      console.log('Portfolio saved successfully');
+      
+      // Verify the data was saved correctly
+      const savedData = localStorage.getItem(portfolioKey);
+      if (savedData) {
+        const parsedData = JSON.parse(savedData);
+        console.log('Verification - saved positions count:', parsedData.length);
+      }
+    } catch (storageError) {
+      console.error('Error storing portfolio in localStorage:', storageError);
     }
   } catch (error) {
     console.error('Error saving portfolio:', error);
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
   }
 }
 
@@ -431,12 +605,28 @@ export function executeSell(
     // Get the string representation for comparison
     const stockPublicKeyStr = stockPublicKey.toString();
     console.log('Executing sell for stock:', stockPublicKeyStr);
+    console.log('Wallet:', walletPublicKey.toString());
+    console.log('Quantity:', quantity);
+    console.log('Price:', price);
     
     // Load portfolio and check if the user owns enough shares
     const portfolio = loadPortfolio(walletPublicKey);
+    console.log('Portfolio positions loaded:', portfolio.length);
+    
+    // Debug: Log all portfolio positions
+    portfolio.forEach((pos, idx) => {
+      console.log(`Position ${idx}:`, {
+        symbol: pos.symbol,
+        pubkey: pos.stockPublicKey.toString(),
+        quantity: pos.quantity
+      });
+    });
+    
     const positionIndex = portfolio.findIndex(p => 
       p.stockPublicKey.toString() === stockPublicKeyStr
     );
+    
+    console.log('Position index in portfolio:', positionIndex);
     
     if (positionIndex === -1) {
       console.error('Stock not in portfolio:', stockPublicKeyStr);
@@ -444,6 +634,11 @@ export function executeSell(
     }
     
     const position = portfolio[positionIndex];
+    console.log('Found position:', {
+      symbol: position.symbol,
+      quantity: position.quantity,
+      requestedSellAmount: quantity
+    });
     
     if (position.quantity < quantity) {
       console.error(`Not enough shares to sell: ${position.quantity} < ${quantity}`);
@@ -459,8 +654,8 @@ export function executeSell(
       return false;
     }
     
-    // Log the first few stocks for debugging
-    stocks.slice(0, 3).forEach((s, i) => {
+    // Log all loaded stocks for debugging
+    stocks.forEach((s, i) => {
       console.log(`Stock ${i} for sell:`, {
         publicKey: s.publicKey.toString(),
         symbol: s.account.symbol,
@@ -472,11 +667,90 @@ export function executeSell(
       s.publicKey.toString() === stockPublicKeyStr
     );
     
+    console.log('Stock index in stocks list:', stockIndex);
+    
     if (stockIndex === -1) {
       console.error('Stock not found in stocks list:', stockPublicKeyStr);
-      return false;
+      
+      // Try to find stock by symbol instead - fallback mechanism
+      const stockBySymbol = stocks.findIndex(s => 
+        s.account.symbol === position.symbol
+      );
+      
+      if (stockBySymbol !== -1) {
+        console.log('Found stock by symbol instead:', position.symbol);
+        
+        // Update the stock public key with the correct one
+        stockPublicKey = stocks[stockBySymbol].publicKey;
+        
+        // Update position in portfolio with correct key
+        portfolio[positionIndex].stockPublicKey = stockPublicKey;
+        savePortfolio(walletPublicKey, portfolio);
+        
+        // Continue with this stock
+        stocks[stockBySymbol].account.available_supply += quantity;
+        saveStocks(stocks);
+        
+        // Update portfolio position
+        const newQuantity = position.quantity - quantity;
+        
+        if (newQuantity > 0) {
+          // Update position
+          portfolio[positionIndex] = {
+            ...position,
+            quantity: newQuantity,
+            currentPrice: price,
+            stockPublicKey: stockPublicKey // Ensure the correct key is used
+          };
+        } else {
+          // Remove position if quantity is 0
+          portfolio.splice(positionIndex, 1);
+        }
+        
+        savePortfolio(walletPublicKey, portfolio);
+        console.log(`Successfully sold ${quantity} shares of ${position.symbol} using symbol match`);
+        return true;
+      }
+      
+      // If we couldn't find by symbol, create a temporary stock
+      console.log('Creating temporary stock to proceed with sell');
+      const tempStock: MockStock = {
+        publicKey: position.stockPublicKey,
+        account: {
+          name: position.name,
+          symbol: position.symbol,
+          current_price: position.currentPrice,
+          total_supply: 10000,
+          available_supply: 1000,
+          authority: walletPublicKey
+        }
+      };
+      
+      // Add to stocks and save
+      stocks.push(tempStock);
+      saveStocks(stocks);
+      
+      // Update portfolio position
+      const newQuantity = position.quantity - quantity;
+      
+      if (newQuantity > 0) {
+        // Update position
+        portfolio[positionIndex] = {
+          ...position,
+          quantity: newQuantity,
+          currentPrice: price
+        };
+      } else {
+        // Remove position if quantity is 0
+        portfolio.splice(positionIndex, 1);
+      }
+      
+      savePortfolio(walletPublicKey, portfolio);
+      console.log(`Successfully sold ${quantity} shares of ${position.symbol} using temporary stock`);
+      return true;
     }
     
+    // Normal flow - stock found
     // Update available supply
     stocks[stockIndex].account.available_supply += quantity;
     saveStocks(stocks);
@@ -501,6 +775,13 @@ export function executeSell(
     return true;
   } catch (error) {
     console.error('Sell execution error:', error);
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
     return false;
   }
 }
