@@ -17,4 +17,9 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = "0.31.0"
+anchor-lang = "=0.28.0"
+toml_edit = { version = "=0.19.15", optional = true }
+
+[dependencies.solana-program]
+version = "=1.16.14"
+optional = true
